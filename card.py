@@ -1,5 +1,25 @@
 from enum import Enum, Flag, auto
-from . team_status import Position
+
+
+class BatHand(Flag):
+    RIGHT = auto()
+    LEFT = auto()
+    SWITCH = RIGHT | LEFT
+
+
+class Position(Enum):
+    STARTER = auto()
+    RELIEVER = auto()
+    PITCHER = STARTER & RELIEVER
+    CATCHER = auto()
+    INFIELDER = auto()
+    OUTFIELDER = auto()
+    UTIL_CI = CATCHER | INFIELDER
+    UTIL_CO = CATCHER | OUTFIELDER
+    UTIL_IO = CATCHER | OUTFIELDER
+    UTIL_CIO = CATCHER | INFIELDER | OUTFIELDER
+    DH = auto()
+
 
 class Course(Enum):
     CENTER = auto()
@@ -9,7 +29,7 @@ class Course(Enum):
     RIGHT = auto()
 
 
-class MeetShotPoint(Enum):
+class Point(Enum):
     NULL = (auto(), "○")
     FILL = (auto(), "●")
     STAR = (auto(), "★")
@@ -26,7 +46,7 @@ class MeetShotPts(dict):
     def __init__(self):
         super().__init__(
             {
-                course: MeetShotPoint.NULL
+                course: Point.NULL
                 for course in Course
             }
         )
@@ -44,11 +64,11 @@ class MeetShotPts(dict):
         return "\n".join(lines)
 
     def clear(self, course):
-        self[course] = MeetShotPoint.NULL
+        self[course] = Point.NULL
 
     def clear_all(self):
         for course in Course:
-            self[course] = MeetShotPoint.NULL
+            self[course] = Point.NULL
         
     def replace_pts(self, from_point, to_point):
         """
@@ -66,49 +86,30 @@ class Card:
 
 
 class PlayerCard(Card):    
-    def __init__(self, id, bat_hand, player_type,
+    def __init__(self, id, bat_hand, position,
                  ms_pts, power, draw):
         super().__init__(id)
         self.bat_hand = bat_hand
-        self.type = player_type
-        self.ms_pts = ms_pts # meet/shot points
-        self.power = power
-        self.draw = draw
+        self.position = position
+
+        # --- default ---
+        self._ms_pts = ms_pts # meet/shot points
+        self._power = power
+        self._draw = draw
         self.ability = []
 
+    def refresh(self):
+        self.ms_pts = self._ms_pts
+        self.power = self._power
+        self.draw = self._draw
+        
     def is_defensible(self, position):
         if position == Position.DH:
             return True
-        if position == Position.PITCHER:
-            return (
-                self.Type.STARTER in self.type
-                or
-                self.Type.RELIEVER in self.type
-            )
-        if position == Position.CATCHER:
-            return self.Type.CATCHER in self.type
-        if position == Position.INFIELDER:
-            return self.Type.INFIELDER in self.type
-        if position == Position.OUTFIELDER:
-            return self.Type.OUTFIELDER in self.type
-        
-    class Type(Flag):
-        STARTER = auto()
-        RELIEVER = auto()
-        PITCHER = STARTER | RELIEVER
-        CATCHER = auto()
-        INFIELDER = auto()
-        OUTFIELDER = auto()
-        FIELDER = CATCHER | INFIELDER | OUTFIELDER
-        UTIL_CI = CATCHER | INFIELDER
-        UTIL_CO = CATCHER | OUTFIELDER
-        UTIL_IO = INFIELDER | OUTFIELDER
-        UTIL_CIO = CATCHER | INFIELDER | OUTFIELDER
+        else:
+            return position in self.position
 
-    class BatHand(Flag):
-        RIGHT = auto()
-        LEFT = auto()
-        SWITCH = RIGHT | LEFT
+
         
         
 class TacticsCard(Card):
