@@ -211,8 +211,8 @@ class FinishAtBatAction:
             return FinishTopBottomInningPhase.play(game)
 
     @staticmethod
-    def four_ball(game):
-        pass
+    def strike_out(game):
+        game.out_count += 1
 
     @staticmethod
     def infield_grounder(game):
@@ -224,19 +224,31 @@ class FinishAtBatAction:
 
     @staticmethod
     def outfield_fly(game):
-        pass
+        game.out_count += 1
 
     @staticmethod
     def sacrifice_fly(game):
-        pass
-
+        game.out_count += 1
+        if game.out_count < 3:
+            third_runner = game.field.runners[2]
+            if third_runner is not None:
+                game.score[game.is_bottom] += 1
+                game.field.runners[2] = None
+                
     @staticmethod
     def productive_out(game):
-        pass
+        game.out_count += 1
+        if game.out_count < 3:
+            if game.field.runners[2] is not None:
+                game.score[game.is_bottom] += 1
+            game.field.runners = [None] + game.field.runners[0:2]
 
     @staticmethod
     def infield_hit(game):
-        pass
+        if game.field.runners[2] is not None:
+            game.score[game.is_bottom] += 1
+        batter = game.field.batter_box[0]
+        game.field.runners = [batter] + game.field.runners[0:2]
 
     @staticmethod
     def single(game):
@@ -244,7 +256,13 @@ class FinishAtBatAction:
 
     @staticmethod
     def double(game):
-        pass
+        added_score = sum(
+            runner is not None
+            for runner in game.field.runners[1:3]
+        )
+        game.scores[game.is_bottom] += added_score
+        batter = game.field.batter_box[0]
+        game.field.runners = [None, batter] + game.field.runners[0]
 
     @staticmethod
     def triple(game):
