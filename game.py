@@ -1,6 +1,6 @@
 from copy import deepcopy
 import numpy as np
-from . card import Card, PlayerCard, TacticsCard, VSCard
+from . card import Course, Point, Card, PlayerCard, TacticsCard, VSCard
 
 
 class Rule:
@@ -13,35 +13,35 @@ class Rule:
 class ScoreBoard:
     def __init__(self):
         self.board = [[], []] # top, bottom
-        self.total_score = [0, 0]
 
     def new_inning(self, game):
         self.board[game.is_bottom].append(None)
 
-    def calc_total_score(self):
-        self.total_score = [
+    @property
+    def total_score(self):
+        total_score = [
             sum(filter(None, each_score))
             for each_score in self.board
         ]
+        return total_score
 
-    def add_score(self, n, game):
+    def add_score(self, game, n):
         board = self.board[game.is_bottom]
         if board[-1] is None:
             board[-1] = n
         else:
             board[-1] += n
-        self.calc_total_score()
 
     def fill_zero(self, game):
-        self.add_score(0, game)
-        
+        self.add_score(game, 0)
+
+    @property
     def winning_team(self):
-        if self.total_score[0] > self.total_score[1]:
-            return 0
-        elif self.total_score[0] < self.total_score[1]:
-            return 1
-        else:
+        total_score = self.total_score
+        if total_score[0] == total_score[1]:
             return None
+        else:
+            return np.argmax(total_score)
 
 
 class Field:
@@ -67,8 +67,70 @@ class Field:
         self.batter_box = [batter, is_right]
         
 
+class Gauge:
+    def __init__(self, default: dict):
+        self._default = default
+        self.gauge = self._default
+
+    def __str__(self):
+        return self.gauge.__str__()
+
+    def __repr__(self):
+        return self.gauge.__repr__()
+
+    def __getitem__(self, key):
+        return self.gauge.__getitem__(key)
+
+    def __setitem__(self, key, value):
+        if key not in self.gauge:
+            raise KeyError(key)
+        self.gauge[key] = value
+        
+    def refresh(self):
+        self.gauge = self._default
+
+
+class HitGauge(Gauge):
+    def __init__(self):
+        default = {
+            4: HomeRun,
+            3: Triple,
+            2: Double,
+            1: Single,
+            0: Single,
+            -1: InfieldHit,
+            -2: InfieldGrounder,
+        }
+        super().__init__(default)
+
+    def __getitem__(self, power_diff):
+        if not isinstance(power_diff, int):
+            raise KeyError(power_diff)
+        if power_diff > 4:
+            return super().__getitem__(4)
+        elif power_diff < -2:
+            return super().__getitem__(-2)
+        else:
+            return super().__getitem__(power_diff)
+
+        
+class OutGage(Gauge):
+    def __init__(self):
+        default = {
+            Course.HIGH: OutfieldFly,
+            Course.LEFT: StrikeOut,
+            Course.CENTER: StrikeOut,
+            Course.RIGHT: StrikeOut,
+            Course.LOW: InfieldGrounder,
+        }
+        super().__init__(default)
+        
+
+# **************
+# * Main Class *
+# **************
 class Game:
-    def __init__(self, home_player, visitor_player, rule):
+    def __init__(self, visitor_player, home_player, rule):
 
         self.score_board = ScoreBoard()
         self.out = None
@@ -79,6 +141,9 @@ class Game:
         self.players = [visitor_player, home_player]
         self.field = Field()
 
+        self.hit_gauge = HitGauge()
+        self.out_gauge = OutGauge()
+        
         # --- game rules ---
         self.RULE = rule
         # max_inning, max_extra_inning, is_dh, etc...
@@ -98,9 +163,11 @@ class Game:
             pass # <-- jump to game set phase
 
     # --- inning ---
+    @property
     def is_final_inning(self):
         return game.inning >= self.RULE.max_inning
 
+    @property
     def can_extend(self):
         return game.inning < self.RULE.max_extra_inning
 
@@ -113,11 +180,12 @@ class Game:
         self.score_board.new_inning(self)
 
     def add_score(self, n):
-        self.score_board.add_score(n, self)
+        self.score_board.add_score(self, n)
 
     def fill_zero_score(self):
         self.score_board.fill_zero(self)
 
+    @property
     def winning_team(self):
         return self.score_board.winning_team()
 
@@ -139,7 +207,14 @@ class GameSet(Exception):
     raise GameSet when the game-set condition is satisfied
     """
     pass
-    
+
+
+class Change(Exception):
+    """
+    raise Change at the time of three-out-change
+    """
+    pass
+
 
 # **********
 # * Phases *
@@ -148,7 +223,7 @@ class Phase:
     @classmethod
     def execute(cls, game):
         cls.playing(game)
-        cls.next_phase().execute(game)
+        cls.next_phase(game).execute(game)
 
     @staticmethod
     def playing(game):
@@ -164,6 +239,7 @@ class StartGamePhase(Phase):
     def playing(game):
         game.inning = 0
         game.next_batter = [0, 0]
+        # <-- refresh all cards (including both team and deck)
         for player in game.players:
             player.draw(5)
 
@@ -199,8 +275,10 @@ class StartTopBottomInningPhase(Phase):
 class AtBatPhase(Phase):
     @staticmethod
     def playing(game):
-        # <--- goto ***Action class
-        pass
+        try:
+            BatterSetAction.execute(game, None)
+        except Change:
+            pass
 
     @staticmethod
     def next_phase(game):
@@ -220,8 +298,8 @@ class FinishTopBottomInningPhase(Phase):
         if game.is_bottom:
             return FinishInningPhase
         else:
-            if game.is_final_inning() and game.winning_team() == 1:
-                raise GameSet
+            if game.is_final_inning and game.winning_team == 1:
+                raise GameSet()
             game.is_bottom = True
             return StartTopBottomInningPhase
 
@@ -234,14 +312,14 @@ class FinishInningPhase(Phase):
 
     @staticmethod
     def next_phase(game):
-        if not game.is_final_inning():
+        if not game.is_final_inning:
             return StartInningPhase
-        elif game.winning_team() is not None:
-            raise GameSet
-        elif game.can_extend():
+        elif game.winning_team is not None:
+            raise GameSet()
+        elif game.can_extend:
             return StartInningPhase
         else:
-            raise GameSet
+            raise GameSet()
         
         
 # class FinishGamePhase:
@@ -260,39 +338,24 @@ class FinishInningPhase(Phase):
 # ******************
 # * At-Bat Actions *
 # ******************
-class AtBatResult(Enum):
-    STRIKE_OUT = auto()
-    INFIELD_GROUNDER = auto()
-    DOUBLE_PLAY = auto()
-    OUTFIELD_FLY = auto()
-    SACRIFICE_FLY = auto()
-    PRODUCTIVE_OUT = auto() # SHINRUI_DA
-    INFIELD_HIT = auto()
-    SINGLE = auto()
-    DOUBLE = auto()
-    TRIPLE = auto()
-    HOME_RUN = auto()
-    BALL_FOUR = auto()
+class Action:
+    @classmethod
+    def execute(cls, game, result):
+        result = cls.playing(game, result)
+        cls.next_action(game).execute(game, result)
 
+    @staticmethod
+    def playing(game, result):
+        raise NotImplementedError()
 
-# class Action:
-#     @classmethod
-#     def execute(cls, game):
-#         cls.playing(game)
-#         cls.next_phase().execute(game)
-
-#     @staticmethod
-#     def playing(game):
-#         raise NotImplementedError()
-
-#     @staticmethod
-#     def next_action(game):
-#         raise NotImplementedError()
+    @staticmethod
+    def next_action(game):
+        raise NotImplementedError()
         
 
-class BatterSetAction:
+class BatterSetAction(Action):
     @staticmethod
-    def play(game):
+    def playing(game, result):
         pitcher = game.defense_player.pitcher
         pitcher.refresh()
         game.field.set_mound(pitcher)
@@ -305,140 +368,216 @@ class BatterSetAction:
 
         # <-- ask if position change / pinch hitter is needed
 
-        return PrePitchAction.play(game)
+        return None
+    
+    @staticmethod
+    def next_action(game):
+        return PrePitchAction
         
 
-class PrePitchAction:
+class PrePitchAction(Action):
     @staticmethod
-    def play(game):
+    def playing(game, result):
         # <-- set tactics card, use abilities, etc...
-        return PitchAction.play(game)
+        return None
 
-    
-class PitchAction:
     @staticmethod
-    def play(game):
-        # <-- set VS card to VSCardZone
+    def next_action(game):
+        return PitchAction
+
+class PitchAction(Action):
+    @staticmethod
+    def playing(game, result):
+        # <-- set VSCard to VSCardZone
         for player in game.players:
             player.open_vs_card()
 
-        # <-- SP-Combo check
+        # <-- SPCombo Check
         # <-- Defense side => Offense side
 
+        return None
+
+    @staticmethod
+    def next_action(game):
         vs_off = game.offense_player.vs_card
         vs_def = game.defense_player.vs_card
-
         if isinstance(vs_off, VSCard) and isinstance(vs_def, VSCard):
             # <-- Point-Draw
-            return PostPitchAction.play(game)
+            return PostPitchAction
         else:
-            return PostGaugeCheckAction.non_vs_play(game)
+            return GaugeCheckAction
 
 
-class PostPitchAction:
+class PostPitchAction(Action):
     @staticmethod
-    def play(game):
+    def playing(game, result):
         vs_off = game.offense_player.vs_card
         vs_def = game.defense_player.vs_card
         # <-- open reversed cards, use abilities, etc...
-        return GaugeCheckAction.play(game)
-
-    
-class GaugeCheckAction:
-    @staticmethod
-    def play(game):
         # <-- double-play, sacrifice fly...
+        return None
 
-        vs_off = game.offense_player.vs_card
-        vs_def = game.defense_player.vs_card
-        # <-- judge the result of at-bat
-        result = None
-        return PostGaugeCheckAction.play(game, result)
-
-    
-class PostGaugeCheckAction:
     @staticmethod
-    def non_vs_play(game):
-        vs_off = game.offense_player.vs_card
-        vs_def = game.defense_player.vs_card
+    def next_action(game):
+        return GaugeCheckAction
+
         
+class GaugeCheckAction(Action):
+    @staticmethod
+    def playing(game, result):
+        vs_off = game.offense_player.vs_card
+        vs_def = game.defense_player.vs_card
         if not isinstance(vs_def, VSCard):
-            result = AtBatResult.BALL_FOUR
-            return PostGaugeCheckAction.play(game, result)
+            return BallFour
+        elif not isinstance(vs_off, VSCard):
+            return StrikeOut
+        elif GaugeCheckAction.is_just_meet(game, vs_off, vs_def):
+            return GaugeCheckAction.hit_gauge_playing(game, vs_off, vs_def)
         else:
-            result = AtBatResult.STRIKE_OUT
-            return PostGaugeCheckAction.play(game, result)
+            return GaugeCheckAction.out_gauge_playing(game, vs_def)
+
+    @staticmethod
+    def is_just_meet(game, vs_off, vs_def):
+        if vs_def.course == vs_off.course:
+            return True
+        meet_pt = game.field.batter.ms_pts[vs_def.course]
+        shot_pt = game.field.mound.ms_pts[vs_def.course]
+        if meet_pt == Point.STAR:
+            return True
+        elif meet_pt == Point.FILL and shot_pt != Point.STAR:
+            return True
+        else:
+            return False
+        
+    @staticmethod
+    def hit_gauge_playing(game, vs_off, vs_def):
+        offense_power = game.field.batter.power + vs_off.pw_off
+        defense_power = game.field.mound.power + vs_def.pw_def
+        return game.hit_gauge[offense_power - defense_power]
+
+    @staticmethod
+    def out_gauge_playing(game, vs_def):
+        return game.out_gauge[vs_def.course]
     
     @staticmethod
-    def play(game, result):
+    def next_action(game):
+        return PostGaugeCheckAction
+
+
+class PostGaugeCheckAction(Action):
+    @staticmethod
+    def playing(game, result):
         # <-- set tactics card, use abilities, etc...
-        return FinishAtBatAction.play(game, result)
+        return result
 
+    @staticmethod
+    def next_action(game):
+        return FinishAtBatAction
+
+
+class FinishAtBatAction(Action):
+    @staticmethod
+    def playing(game, result):
+        result.apply(game)
+        if game.is_final_inning and game.winning_team == 1:
+            raise GameSet()
+        # <-- refresh all cards (with few exceptions)
+        return None
     
-class FinishAtBatAction:
     @staticmethod
-    def play(game, result):
-        # <-- move runners and so on
-        # <-- refresh check
-        if game.out_count >= 3:
-            return FinishTopBottomInningPhase.play(game)
+    def next_action(game):
+        if game.out >= 3:
+            raise Change()
+        return BatterSetAction
 
-    @staticmethod
-    def strike_out(game):
-        game.out += 1
 
+# ******************
+# * At-Bat Results *
+# ******************
+class AtBatResult:
     @staticmethod
-    def infield_grounder(game):
+    def apply(game):
         pass
 
-    @staticmethod
-    def double_play(game):
-        pass
 
+class StrikeOut(AtBatResult):
     @staticmethod
-    def outfield_fly(game):
+    def apply(game):
         game.out += 1
 
+
+class InfieldGrounder(AtBatResult):
     @staticmethod
-    def sacrifice_fly(game):
+    def apply(game):
+        # <--- select which runner be out
+        pass
+
+
+class DoublePlay(AtBatResult):
+    @staticmethod
+    def apply(game):
+        # <--- select which runner be out
+        pass
+
+
+class OutfieldFly(AtBatResult):
+    @staticmethod
+    def apply(game):
+        game.out += 1
+
+
+class SacrificeFly(AtBatResult):
+    @staticmethod
+    def apply(game):
         game.out += 1
         if game.out < 3:
             third_runner = game.field.runners[2]
             if third_runner is not None:
                 game.add_score(1)
                 game.field.runners[2] = None
-                
+    
+
+class ProductiveOut(AtBatResult):
     @staticmethod
-    def productive_out(game):
+    def apply(game):
         game.out += 1
         if game.out < 3:
             if game.field.runners[2] is not None:
                 game.add_score(1)
-            game.field.runners = [None] + game.field.runners[0:2]
+            game.field.runners = [None] + game.field.runners[:-1]
+        
 
+class InfieldHit(AtBatResult):
     @staticmethod
-    def infield_hit(game):
+    def apply(game):
         if game.field.runners[2] is not None:
             game.add_score(1)
-        batter = game.field.batter
-        game.field.runners = [batter] + game.field.runners[0:2]
+            batter = game.field.batter
+            game.field.runners = [batter] + game.field.runners[:-1]
 
+
+class Single(AtBatResult):
     @staticmethod
-    def single(game):
+    def apply(game):
+        # <-- swift runner check
         pass
 
+
+class Double(AtBatResult):
     @staticmethod
-    def double(game):
+    def apply(game):
         num_returns = sum(
             runner is not None
-            for runner in game.field.runners[1:3]
+            for runner in game.field.runners[1:]
         )
         game.add_score(num_returns)
         batter = game.field.batter
         game.field.runners = [None, batter] + game.field.runners[0]
 
+
+class Triple(AtBatResult):
     @staticmethod
-    def triple(game):
+    def apply(game):
         num_returns = sum(
             runner is not None
             for runner in game.field.runners
@@ -447,8 +586,10 @@ class FinishAtBatAction:
         batter = game.field.batter
         game.field.runners = [None, None, batter]
 
+
+class HomeRun(AtBatResult):
     @staticmethod
-    def home_run(game):
+    def apply(game):
         num_returns = sum(
             runner is not None
             for runner in game.field.runners
@@ -456,8 +597,10 @@ class FinishAtBatAction:
         game.add_score(num_returns)
         game.field.runners = [None, None, None]
 
+
+class BallFour(AtBatResult):
     @staticmethod
-    def ball_four(game):
+    def apply(game):
         batter = game.field.batter
         runners = game.field.runners
         if None in runners: # not full-base

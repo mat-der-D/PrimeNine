@@ -84,6 +84,9 @@ class Card:
     def __init__(self, id):
         self.id = id
 
+    def refresh(self):
+        pass
+
 
 class PlayerCard(Card):    
     def __init__(self, id, bat_hand, position,
@@ -96,6 +99,7 @@ class PlayerCard(Card):
         self._ms_pts = ms_pts # meet/shot points
         self._power = power
         self._draw = draw
+        self.refresh()
         self.ability = []
 
     def refresh(self):
@@ -108,8 +112,6 @@ class PlayerCard(Card):
             return True
         else:
             return position in self.position
-
-
         
         
 class TacticsCard(Card):
@@ -127,6 +129,10 @@ class TacticsCard(Card):
 class VSCard(Card):
     def __init__(self, id, course, pw_off, pw_def):
         super().__init__(id)
-        self.course = course
+        self._course = course
+        self.course = self._course
         self.pw_off = pw_off
         self.pw_def = pw_def
+
+    def refresh(self):
+        self.course = self._course

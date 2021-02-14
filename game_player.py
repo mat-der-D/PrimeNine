@@ -37,7 +37,7 @@ class GamePlayer:
 
     def open_vs_card(self):
         self.deck_field.vs_zone.open_all()
-
+        
     # sp-combo
     def set_sp_combo(self, card, batter):
         self.deck_field.sp_combo_zone.set_card(card, batter)
@@ -156,11 +156,13 @@ class Zone(list):
 
     def trash(self, trash_, idx):
         card = self.pop(idx)[0]
+        card.refresh()
         trash_.append(card)
             
     def trash_all(self, trash_):
-        for card_flag in self:
-            trash_.append(card_flag[0])
+        for card, _ in self:
+            card.refresh()
+            trash_.append(card)
         self.clear()
 
         
