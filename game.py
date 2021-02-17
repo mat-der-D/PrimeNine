@@ -114,7 +114,7 @@ class HitGauge(Gauge):
             return super().__getitem__(power_diff)
 
         
-class OutGage(Gauge):
+class OutGauge(Gauge):
     def __init__(self):
         default = {
             Course.HIGH: OutfieldFly,
